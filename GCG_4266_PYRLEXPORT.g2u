@@ -1,0 +1,154 @@
+Program.Sub.Preflight.Start
+V.Global.sGatheredData.Declare(String)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+	V.Local.sSQL.Declare(String)
+	'Coded by: RAN
+	'Updated on 3/26/2018 by KCC
+	
+	F.Intrinsic.Control.SelectCase(V.Caller.Hook)
+		'Shop Floor> Transactions> Transfer Labor to Payroll
+		F.Intrinsic.Control.Case(15290)
+			F.Intrinsic.Control.CallSub(GatherData)
+			F.Intrinsic.Control.CallSub(WriteDataToFile)
+		
+		'Populate
+		F.Intrinsic.Control.Case(15340)
+			V.Passed.000236.Set("Department")
+		
+		'Employee Master Pre-Save Hook
+		F.Intrinsic.Control.Case(15345)
+			F.Intrinsic.Control.CallSub(ValidateDepartmentID)
+			
+	F.Intrinsic.Control.EndSelect
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(CatchError,"Sub",V.Ambient.CurrentSubroutine,"Error",V.Ambient.ErrorNumber,"Description",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.ValidateDepartmentID.Start
+F.Intrinsic.Control.Try
+	V.Local.sSQL.Declare(String)
+	
+	F.ODBC.Connection!conX.OpenCompanyConnection
+	
+	F.Intrinsic.String.Build("SELECT * FROM Departments WHERE Dept_ID= '{0}'",V.Passed.000020.Trim,V.Local.sSQL)
+	
+	F.ODBC.Connection!conX.OpenLocalRecordsetRO("rst",V.Local.sSQL)
+	F.Intrinsic.Control.If(V.ODBC.conX!rst.EOF,=,True)
+		F.Intrinsic.UI.Msgbox("Invalid Department ID")
+		V.Passed.777777.Set(1)
+		
+	F.Intrinsic.Control.EndIf
+	
+	F.ODBC.conX!rst.Close
+	F.ODBC.Connection!conX.Close
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(CatchError, "Sub", V.Ambient.CurrentSubroutine,"Error",V.Ambient.ErrorNumber,"Description",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.ValidateDepartmentID.End
+
+Program.Sub.WriteDataToFile.Start
+F.Intrinsic.Control.Try
+	V.Local.bDirectoryExists.Declare(Boolean)
+	V.Local.sDirectory.Declare(String)
+	V.Local.sFileName.Declare(String)
+	V.Local.sFullPath.Declare(String)
+	V.Local.sDate.Declare(String)
+	
+	'Verify export file path exists
+	F.Intrinsic.String.Build("{0}\Execupay TimeImport",V.Caller.FilesDir,V.Local.sDirectory)
+	
+	F.Intrinsic.File.Exists(V.Local.sDirectory,V.Local.bDirectoryExists)
+	F.Intrinsic.Control.If(V.Local.bDirectoryExists.Not)
+		F.Intrinsic.File.CreateDir(V.Local.sDirectory)
+	F.Intrinsic.Control.EndIf
+	
+	'build the filename then write the data
+	F.Intrinsic.String.Format(V.Ambient.Date,"MMDDYYYY",V.Local.sDate)
+	F.Intrinsic.String.Build("{0}.csv",V.Local.sDate,V.Local.sFileName)
+	F.Intrinsic.String.Build("{0}\{1}",V.Local.sDirectory,V.Local.sFileName,V.Local.sFullPath)
+	F.Intrinsic.File.String2File(V.Local.sFullPath,V.Global.sGatheredData)
+		
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(CatchError,"Sub",V.Ambient.CurrentSubroutine,"Error",V.Ambient.ErrorNumber,"Description",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.WriteDataToFile.End
+
+Program.Sub.GatherData.Start
+F.Intrinsic.Control.Try
+	V.Local.sSQL.Declare(String)
+	V.Local.sCymd.Declare(String)
+	V.Local.sTime.Declare(String)
+	V.Local.sRecord.Declare(String)
+	V.Local.sFieldList.Declare(String)
+	V.Local.sDTName.Declare(String)
+	
+	F.Intrinsic.String.Left(V.Passed.888888,8,V.Local.sCymd)
+	F.Intrinsic.String.Mid(V.Passed.888888,9,6,V.Local.sTime)
+	F.ODBC.Connection!conX.OpenCompanyConnection
+	
+	V.Local.sSQL.Set("SELECT Emp.Employee, P.Type, CASE WHEN P.Type = 'RT' THEN 0 ELSE P.EC END AS RTYPE, EMP.Rate, EMP.Comments_1, SUM(CONVERT(Hours,SQL_FLOAT)) AS HrsRT")
+	F.Intrinsic.String.Build("{0} FROM Employee_Mstr EMP JOIN Pyrl_Labor_Xfer P ON Emp.Employee = P.Employee WHERE Run_Cymd = '{1}' AND Run_Time = '{2}' AND Type <> 'OT'" ,V.Local.sSQL,V.Local.sCymd,V.Local.sTime,V.Local.sSQL)
+	F.Intrinsic.String.Build("{0} GROUP BY Emp.Employee, P.Type, RTYPE, EMP.Rate, EMP.Comments_1" ,V.Local.sSQL,V.Local.sSQL)
+	
+	F.Data.DataTable.CreateFromSQL("DTExport1","conX",V.Local.sSQL)
+	
+	F.Intrinsic.Control.If(V.DataTable.DTExport1.RowCount,=,0)
+		F.Intrinsic.UI.Msgbox("No records found.","Payroll Export")
+		F.ODBC.Connection!conX.Close
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	
+	V.Local.sSQL.Set("SELECT Emp.Employee, SUM(CONVERT(Hours,SQL_FLOAT)) AS HrsOT, 0 AS RTYPE")
+	F.Intrinsic.String.Build("{0} FROM Employee_Mstr EMP JOIN Pyrl_Labor_Xfer P ON Emp.Employee = P.Employee WHERE Run_Cymd = '{1}' AND Run_Time = '{2}' AND Type = 'OT'" ,V.Local.sSQL,V.Local.sCymd,V.Local.sTime,V.Local.sSQL)
+	F.Intrinsic.String.Build("{0} GROUP BY Emp.Employee, P.Type" ,V.Local.sSQL,V.Local.sSQL)
+	
+	F.Data.DataTable.CreateFromSQL("DTExport2","conX",V.Local.sSQL)
+	
+	F.Intrinsic.Control.If(V.DataTable.DTExport2.RowCount,=,0)
+		'if no records OT dont use LINQ
+		F.Data.DataTable.AddColumn("DTExport1","HrsOT","string")
+		V.Local.sDTName.Set("DTExport1")
+		
+	F.Intrinsic.Control.Else
+		F.Data.Linq.Join("LeftJoin","DataTable","DTExport1*!*E1","DataTable","DTExport2*!*E2","E1.EMPLOYEE=E2.EMPLOYEE AND E1.RTYPE = E2.RTYPE","E1.EMPLOYEE*!*E1.RTYPE*!*E1.COMMENTS_1*!*E1.RATE*!*E1.HrsRT*!*E2.HrsOT","", "","","DTExport",True)
+		V.Local.sDTName.Set("DTExport")
+		F.Data.DataTable.AddColumn(V.Local.sDTName,"Type","string","P")
+	
+	F.Intrinsic.Control.EndIf
+	
+	F.ODBC.Connection!conX.Close
+	
+	F.Data.DataView.Create(V.Local.sDTName,"DVExport")
+	
+	F.Data.DataTable.AddColumn(V.Local.sDTName,"Client Code","string","7500")
+	F.Data.DataTable.AddColumn(V.Local.sDTName,"Employee Social Security","string")
+	F.Data.DataTable.AddColumn(V.Local.sDTName,"Division","string")
+	
+	V.Local.sFieldList.Set("Client Code*!*Employee*!*Employee Social Security*!*Division*!*Comments_1*!*Type*!*RTYPE*!*Rate*!*Division*!*HrsRT*!*HrsOT")
+	F.Data.DataView.ToString(V.Local.sDTName,"DVExport",V.Local.sFieldList,",",V.Ambient.NewLine,V.Global.sGatheredData)
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(CatchError,"Sub",V.Ambient.CurrentSubroutine,"Error",V.Ambient.ErrorNumber,"Description",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.GatherData.End
+
+Program.Sub.CatchError.Start
+F.Intrinsic.Control.Try
+	V.Local.sError.Declare(String)	
+	F.Intrinsic.String.Build("Project: GCG_4266_PYRLEXPORT.g2u{0}{0}Subroutine: {1}{0}Error: {2}{0}Description: {3}",V.Ambient.NewLine,V.Args.Sub,V.Args.Error,V.Args.Description,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError,"Unhandled Error Occurred")
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.CatchError.End
+
+Program.Sub.Comments.Start
+${$0$}$$}$$}$12/27/2016 8:22:09 PM$}$False
+Program.Sub.Comments.End
